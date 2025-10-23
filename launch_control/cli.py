@@ -2,8 +2,17 @@
 CLI implementation for the devin launch control.
 """
 
-from argparse import ArgumentParser
+from argparse import ArgumentParser, Namespace
+from typing import Dict
+
 from .houston import MissionControl
+
+
+_STACK_CONFIG: Dict[str, Dict[str, str]] = {
+    "asg": {"repo": "tii-assisted-grading-services", "default_jira": "P2D-18"},
+    "p2d": {"repo": "paper-to-digital-services", "default_jira": "P2D-1816"},
+    "cle": {"repo": "tii-checklist-editor-services", "default_jira": "P2D-1793"},
+}
 
 
 def _build_parser():
@@ -22,12 +31,7 @@ def _build_parser():
         help="The GitHub stack to launch the session for. (asg, p2d, cle)",
     )
 
-    parser.add_argument(
-        "-j",
-        "--jira",
-        required=False,
-        help="The Jira ticket to launch the session for. (P2D-18, P2D-1816, P2D-1793)",
-    )
+    parser.add_argument("-j", "--jira", help="Jira ticket to associate with launch.")
 
     parser.add_argument(
         "-t",
@@ -55,6 +59,7 @@ def _build_parser():
     parser.add_argument(
         "-l",
         "--limit",
+        type=int,
         default=5,
         required=False,
         help="The number of sessions to launch. (default: 5)",
@@ -67,7 +72,7 @@ def _build_parser():
     return parser
 
 
-def _validate_args(args):
+def _validate_args(args: Namespace) -> None:
     """
     Ensure the parsed arguments respect the documented bounds and relationships.
     """
@@ -90,20 +95,14 @@ def _validate_args(args):
                 "Target type must be one of module, class, or function for unit sessions."
             )
 
-    if args.limit is not None:
-        args.limit = int(args.limit)
+    try:
+        stack_config = _STACK_CONFIG[args.stack]
+    except KeyError as exc:  # pragma: no cover - guarded by argparse
+        raise ValueError(f"Invalid stack: {args.stack}") from exc
 
-    if args.stack == "asg":
-        args.repo = "tii-assisted-grading-services"
-        args.jira = "P2D-18"
-    elif args.stack == "p2d":
-        args.repo = "paper-to-digital-services"
-        args.jira = "P2D-1816"
-    elif args.stack == "cle":
-        args.repo = "tii-checklist-editor-services"
-        args.jira = "P2D-1793"
-    else:
-        raise ValueError(f"Invalid stack: {args.stack}")
+    args.repo = stack_config["repo"]
+    if not args.jira:
+        args.jira = stack_config["default_jira"]
 
 
 def main():

@@ -3,8 +3,6 @@ Houston is the core Mission Control of the devin launch control system.
 """
 
 import json
-import os
-import shutil
 from pathlib import Path
 from typing import Iterable, List, Mapping, Optional, Tuple
 
@@ -45,9 +43,6 @@ class MissionControl:
         # What args are we working with?
         self.debug(f"Args: {self.args}")
 
-        # Initialize the Devin API client
-        api = DevinAPI()
-
         # Get the targets for the session
         print("Getting targets...")
         targets = self.get_targets()
@@ -75,17 +70,18 @@ class MissionControl:
         Get the targets for the session.
         """
 
-        # if the type is not prompts, get the target type from the args
         if self.args.type != "prompt":
-            # the targets are in targets/{target_type}/{stack}.json
-            target_path = f"targets/{self.args.target_type.lower()}/{self.args.stack.lower()}.json"
-            if not os.path.exists(target_path):
+            target_path = (
+                Path(__file__).resolve().parent.parent
+                / "targets"
+                / self.args.target_type.lower()
+                / f"{self.args.stack.lower()}.json"
+            )
+            if not target_path.exists():
                 raise FileNotFoundError(
                     f"Target configuration not found at {target_path}"
                 )
-            with open(target_path, "r", encoding="utf-8") as handle:
-                targets = json.load(handle)
-            return targets
+            return json.loads(target_path.read_text(encoding="utf-8"))
 
         return []
 
@@ -93,12 +89,6 @@ class MissionControl:
         """
         Build prompts from the targets.
         """
-
-        # first clear the launch pad directory
-        launch_pad_dir = "launch_pad"
-        if os.path.exists(launch_pad_dir):
-            shutil.rmtree(launch_pad_dir)
-        os.makedirs(launch_pad_dir)
 
         fuel = RocketFuel(self.args, self.repo)
         return fuel.build_prompts(targets)

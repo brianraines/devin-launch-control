@@ -6,13 +6,14 @@ import json
 import os
 import urllib.error
 import urllib.request
-from typing import Mapping
 import uuid
+from typing import Mapping, Optional
 
 try:
     import requests  # type: ignore
 except ImportError:  # pragma: no cover
     requests = None  # type: ignore[assignment]
+
 
 class DevinAPI:
     """
@@ -21,10 +22,30 @@ class DevinAPI:
 
     # Devin AI API details
     API_URL = "https://api.devin.ai/v1/sessions"
-    API_KEY = os.getenv("DEVIN_API_KEY")  # safer than hardcoding
+    API_KEY_ENV_VAR = "DEVIN_API_KEY"
 
-    def __init__(self):
-        pass
+    def __init__(
+        self,
+        api_url: Optional[str] = None,
+        api_key: Optional[str] = None,
+        session=None,
+    ):
+        self.api_url = api_url or self.API_URL
+        if api_key is not None:
+            self.api_key = api_key
+        else:
+            self.api_key = os.getenv(self.API_KEY_ENV_VAR)
+        if not self.api_key:
+            raise RuntimeError(
+                f"{self.API_KEY_ENV_VAR} environment variable is required."
+            )
+
+        if session is not None:
+            self._session = session
+        elif requests is not None:
+            self._session = requests
+        else:
+            self._session = None
 
     def _post_json(self, data: Mapping) -> "_HttpResponse":
         """
@@ -32,20 +53,20 @@ class DevinAPI:
         """
 
         headers = {
-            "Authorization": f"Bearer {self.API_KEY}",
+            "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
 
-        if requests is not None:
+        if self._session is not None:
             try:
-                response = requests.post(self.API_URL, headers=headers, json=data)
+                response = self._session.post(self.api_url, headers=headers, json=data)
                 return _HttpResponse(response.status_code, response.text)
-            except requests.RequestException as exc:  # type: ignore[attr-defined]
+            except Exception as exc:  # pragma: no cover - depends on session impl
                 return _HttpResponse(0, str(exc))
 
         payload = json.dumps(data).encode("utf-8")
         request = urllib.request.Request(
-            self.API_URL,
+            self.api_url,
             data=payload,
             headers=headers,
             method="POST",
@@ -71,10 +92,7 @@ class DevinAPI:
         # add a UUID to the end of the prompt to make it unique
         prompt = f"{prompt}\n\n{uuid.uuid4()}"
 
-        data = {
-            "prompt": f"{prompt}",
-            "idempotent": True
-        }
+        data = {"prompt": f"{prompt}", "idempotent": True}
 
         return self._post_json(data)
 

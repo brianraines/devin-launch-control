@@ -3,7 +3,11 @@ from types import SimpleNamespace
 
 import pytest
 
+import launch_control.houston as houston
 from launch_control.houston import MissionControl
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+LAUNCH_PAD_DIR = PROJECT_ROOT / "prompts" / "launch_pad"
 
 
 def _make_args(**overrides):
@@ -20,6 +24,11 @@ def _make_args(**overrides):
     return SimpleNamespace(**defaults)
 
 
+def _read_prompt(path_str: str) -> str:
+    path = Path(path_str)
+    return path.read_text(encoding="utf-8")
+
+
 def test_build_prompts_module_targets():
     args = _make_args(target_type="module")
     mc = MissionControl(args)
@@ -28,10 +37,10 @@ def test_build_prompts_module_targets():
     prompts = mc.build_prompts(targets)
 
     assert len(prompts) == 1
-    prompt = prompts[0]
-    assert "!moduleunittest" in prompt
-    assert "Module\nassisted-grading-core" in prompt
-    assert "{PLAYBOOK}" not in prompt
+    prompt_text = _read_prompt(prompts[0])
+    assert "!moduleunittest" in prompt_text
+    assert "Module\nassisted-grading-core" in prompt_text
+    assert "{PLAYBOOK}" not in prompt_text
 
 
 def test_build_prompts_class_targets():
@@ -47,9 +56,9 @@ def test_build_prompts_class_targets():
     prompts = mc.build_prompts(targets)
 
     assert len(prompts) == 1
-    prompt = prompts[0]
-    assert "!classunittest" in prompt
-    assert "Class\ncom.example.FooService" in prompt
+    prompt_text = _read_prompt(prompts[0])
+    assert "!classunittest" in prompt_text
+    assert "Class\ncom.example.FooService" in prompt_text
 
 
 def test_build_prompts_function_targets():
@@ -66,10 +75,10 @@ def test_build_prompts_function_targets():
     prompts = mc.build_prompts(targets)
 
     assert len(prompts) == 1
-    prompt = prompts[0]
-    assert "!methodunittest" in prompt
-    assert "Method\nprocess" in prompt
-    assert "Class\ncom.example.FooService" in prompt
+    prompt_text = _read_prompt(prompts[0])
+    assert "!methodunittest" in prompt_text
+    assert "Method\nprocess" in prompt_text
+    assert "Class\ncom.example.FooService" in prompt_text
 
 
 def test_build_prompts_integration_targets():
@@ -80,10 +89,10 @@ def test_build_prompts_integration_targets():
     prompts = mc.build_prompts(targets)
 
     assert len(prompts) == 1
-    prompt = prompts[0]
-    assert "!integrationtest" in prompt
-    assert "Scenario\n54" in prompt
-    assert "Module\nchecklist-editor-api" in prompt
+    prompt_text = _read_prompt(prompts[0])
+    assert "!integrationtest" in prompt_text
+    assert "Scenario\n54" in prompt_text
+    assert "Module\nchecklist-editor-api" in prompt_text
 
 
 def test_build_prompts_prompt_type():
@@ -123,16 +132,15 @@ def test_build_prompts_respects_limit():
     prompts = mc.build_prompts(targets)
 
     assert len(prompts) == 1
-    launch_pad_dir = Path("prompts/launch_pad")
-    prompt_files = list(launch_pad_dir.glob("prompt_*.txt"))
+    prompt_files = sorted(LAUNCH_PAD_DIR.glob("prompt_*.txt"))
     assert len(prompt_files) == 1
 
 
-def test_build_prompts_zero_limit_removes_existing_prompts():
-    launch_pad_dir = Path("prompts/launch_pad")
-    launch_pad_dir.mkdir(parents=True, exist_ok=True)
-    existing = launch_pad_dir / "prompt_42.txt"
-    existing.write_text("stale prompt", encoding="utf-8")
+def test_build_prompts_zero_limit_clears_launch_pad():
+    # Create a stale prompt that should be removed when limit is zero.
+    LAUNCH_PAD_DIR.mkdir(parents=True, exist_ok=True)
+    stale_prompt = LAUNCH_PAD_DIR / "prompt_42.txt"
+    stale_prompt.write_text("stale prompt", encoding="utf-8")
 
     args = _make_args(limit=0)
     mc = MissionControl(args)
@@ -141,4 +149,63 @@ def test_build_prompts_zero_limit_removes_existing_prompts():
     prompts = mc.build_prompts(targets)
 
     assert prompts == []
-    assert list(launch_pad_dir.glob("prompt_*.txt")) == []
+    assert list(LAUNCH_PAD_DIR.glob("prompt_*.txt")) == []
+
+
+def test_load_prompt_returns_inline_prompt():
+    args = _make_args(type="prompt", target_type=None)
+    mc = MissionControl(args)
+
+    prompt_text, source = mc._load_prompt("Investigate outage")
+
+    assert prompt_text.startswith("Investigate outage")
+    assert source == "inline prompt"
+
+
+def test_load_prompt_reads_prompt_file():
+    args = _make_args()
+    mc = MissionControl(args)
+
+    prompt_path = LAUNCH_PAD_DIR / "prompt_test.txt"
+    LAUNCH_PAD_DIR.mkdir(parents=True, exist_ok=True)
+    prompt_path.write_text("Test prompt", encoding="utf-8")
+
+    try:
+        prompt_text, source = mc._load_prompt("prompts/launch_pad/prompt_test.txt")
+        assert prompt_text == "Test prompt"
+        assert source.endswith("prompt_test.txt")
+    finally:
+        prompt_path.unlink(missing_ok=True)
+
+
+def test_launch_prompts_skips_missing_files(monkeypatch):
+    args = _make_args()
+    mc = MissionControl(args)
+
+    LAUNCH_PAD_DIR.mkdir(parents=True, exist_ok=True)
+    prompt_path = LAUNCH_PAD_DIR / "prompt_launch.txt"
+    prompt_path.write_text("Launch me", encoding="utf-8")
+
+    class DummyResponse:
+        status_code = 200
+        text = "ok"
+
+    class DummyAPI:
+        def __init__(self):
+            self.prompts = []
+
+        def post_prompt(self, prompt: str):
+            self.prompts.append(prompt)
+            return DummyResponse()
+
+    dummy_api = DummyAPI()
+    monkeypatch.setattr(houston, "DevinAPI", lambda: dummy_api)
+
+    prompts = [
+        str(prompt_path),
+        str(LAUNCH_PAD_DIR / "missing.txt"),
+    ]
+
+    mc.launch_prompts(prompts)
+
+    assert dummy_api.prompts == ["Launch me"]

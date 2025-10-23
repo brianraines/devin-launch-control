@@ -63,14 +63,68 @@ python3 -m launch_control \
 
 ### Arguments
 - `-s`, `--stack` *(required)*: GitHub stack to launch against. Choices: `asg`, `p2d`, `cle`.
-- `-j`, `--jira` *(required)*: Jira ticket identifier, e.g. `P2D-123`.
+- `-j`, `--jira`: Jira ticket identifier. Defaults to the stack-specific ticket (`asg → P2D-18`, `p2d → P2D-1816`, `cle → P2D-1793`) when omitted.
 - `-t`, `--type`: Session type. Defaults to `unit`. Choices: `unit`, `integration`, `prompt`.
-- `-tt`, `--target-type`: Target granularity for unit sessions. Defaults to `class`. Choices: `module`, `class`, `function`. For integration sessions this value is ignored and forced to `scenario`.
+- `-tt`, `--target-type`: Target granularity for unit sessions. Defaults to `class`. Choices: `module`, `class`, `function`, `scenario`. Integration sessions always force `scenario` regardless of the supplied value.
 - `-p`, `--prompt`: Prompt text when launching a prompt session.
-- `-l`, `--limit`: Number of sessions to start. Defaults to `5`.
+- `-l`, `--limit`: Number of sessions to start. Integer, defaults to `5`.
 - `-d`, `--debug`: Enable debug output.
 
 When `--type prompt` is used, the `--prompt` flag becomes required.
+
+## Target Configuration
+Mission Control reads launch targets from JSON payloads stored in `targets/<target_type>/<stack>.json`. The structure of the payload changes with the target type:
+
+- **Module targets** – `targets/module/asg.json`
+  ```json
+  [
+    { "module": "assisted-grading-core" },
+    { "module": "assisted-grading-api" }
+  ]
+  ```
+  Each entry points Devin at an entire module.
+
+- **Class targets** – `targets/class/asg.json`
+  ```json
+  [
+    {
+      "module": "assisted-grading-core",
+      "classes": [
+        "com.turnitin.assistedgrading.core.service.AssistedGradingBaseService",
+        "com.turnitin.assistedgrading.core.service.AssistedGradingService"
+      ]
+    }
+  ]
+  ```
+  Define the module plus one or more fully qualified class names.
+
+- **Function targets** – `targets/function/asg.json`
+  ```json
+  [
+    {
+      "module": "assisted-grading-core",
+      "class": "com.turnitin.assistedgrading.core.service.AssistedGradingBaseService",
+      "functions": [
+        "findResponseGroupRecord",
+        "updateGroupingConfirmOfResponseRecord"
+      ]
+    }
+  ]
+  ```
+  Specify the module, owning class, and the functions (methods) to exercise.
+
+- **Scenario targets** – `targets/scenario/cle.json`
+  ```json
+  [
+    {
+      "module": "checklist-editor-api",
+      "scenarios": ["54", "55", "56"]
+    }
+  ]
+  ```
+  Pair the module with the integration scenario identifiers to run.
+
+For `--type prompt`, no JSON file is required. Instead, the CLI formats `prompts/custom.txt` with the provided `--prompt`, Jira ticket, and stack-specific repository before sending the text directly to Devin.
 
 ## Development
 - CLI entrypoint: `launch_control/cli.py`

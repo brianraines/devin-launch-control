@@ -3,9 +3,7 @@ Rocket fuel handles mixing the prompt payloads before launch.
 """
 
 from pathlib import Path
-from typing import Iterable, List, Mapping
-import shutil
-import random
+from typing import Iterable, List, Mapping, Optional
 
 
 class RocketFuel:
@@ -16,28 +14,47 @@ class RocketFuel:
     def __init__(self, args, repo: str):
         self.args = args
         self.repo = repo
-        self.limit = int(args.limit)
-        self.clear_launch_pad()
+        self.project_root = Path(__file__).resolve().parent.parent
+        self.launch_pad_dir = self.project_root / "prompts" / "launch_pad"
+        self.limit = self._parse_limit(getattr(args, "limit", None))
+        self._prepare_launch_pad()
 
-    def clear_launch_pad(self):
+    @staticmethod
+    def _parse_limit(raw_limit) -> Optional[int]:
+        if raw_limit is None:
+            return None
+
+        try:
+            limit = int(raw_limit)
+        except (TypeError, ValueError) as exc:  # pragma: no cover - defensive
+            raise ValueError("The limit must be an integer.") from exc
+
+        if limit < 0:
+            raise ValueError("The limit must be zero or greater.")
+
+        return limit
+
+    def _prepare_launch_pad(self) -> None:
         """
-        Clear the launch pad directory.
+        Ensure the launch pad directory exists and does not contain stale prompts.
         """
-        launch_pad_dir = Path("prompts/launch_pad")
-        if launch_pad_dir.exists():
-            shutil.rmtree(launch_pad_dir)
-        launch_pad_dir.mkdir(parents=True, exist_ok=True)
-        for file in launch_pad_dir.glob("*.txt"):
-            file.unlink()
+
+        self.launch_pad_dir.mkdir(parents=True, exist_ok=True)
+        for stale_prompt in self.launch_pad_dir.glob("prompt_*.txt"):
+            stale_prompt.unlink()
 
     def build_prompts(self, targets: Iterable[Mapping]) -> List[str]:
         """
         Build prompts from the provided targets and command arguments.
         """
 
+        if self.limit == 0:
+            return []
+
         if self.args.type == "prompt":
-            with open("prompts/custom.txt", "r", encoding="utf-8") as handle:
-                template = handle.read()
+            template = (self.project_root / "prompts" / "custom.txt").read_text(
+                encoding="utf-8"
+            )
             prompt = template.format(
                 REPO=self.repo,
                 OBJECTIVE=self.args.prompt,
@@ -45,8 +62,9 @@ class RocketFuel:
             )
             return [prompt]
 
-        with open("prompts/playbook.txt", "r", encoding="utf-8") as handle:
-            template = handle.read()
+        template = (self.project_root / "prompts" / "playbook.txt").read_text(
+            encoding="utf-8"
+        )
 
         base_context = {
             "REPO": self.repo,
@@ -72,8 +90,11 @@ class RocketFuel:
 
         target_type = getattr(self.args, "target_type", None)
 
+        def should_stop() -> bool:
+            return self.limit is not None and len(prompts) >= self.limit
+
         for target in targets:
-            if self.limit is not None and len(prompts) >= self.limit:
+            if should_stop():
                 break
 
             module_name = target.get("module")
@@ -91,9 +112,8 @@ class RocketFuel:
 
             elif target_type == "class":
                 for class_name in target.get("classes", []):
-                    if len(prompts) >= self.limit:
+                    if should_stop():
                         break
-
                     context = {
                         **base_context,
                         "PLAYBOOK": "!classunittest",
@@ -110,9 +130,8 @@ class RocketFuel:
                     raise ValueError("Function targets require a 'class' entry.")
 
                 for function_name in target.get("functions", []):
-                    if len(prompts) >= self.limit:
+                    if should_stop():
                         break
-
                     context = {
                         **base_context,
                         "PLAYBOOK": "!methodunittest",
@@ -134,12 +153,11 @@ class RocketFuel:
 
             elif target_type == "scenario":
                 for scenario in target.get("scenarios", []):
-                    if len(prompts) >= self.limit:
+                    if should_stop():
                         break
-
                     context = {
                         **base_context,
-                        "PLAYBOOK": "!java_module_int_test",
+                        "PLAYBOOK": "!integrationtest",
                         "OBJECTIVE": f"Execute integration scenario {scenario}",
                         "INJECTIONS": build_injections(
                             ["Module", module_name, "", "Scenario", str(scenario)]
@@ -152,12 +170,15 @@ class RocketFuel:
         if not prompts:
             raise ValueError("No prompts were generated.")
 
-        launch_pad_dir = Path("prompts/launch_pad")
-        launch_pad_dir.mkdir(parents=True, exist_ok=True)
+        limited_prompts = prompts
+        if self.limit is not None:
+            limited_prompts = prompts[: self.limit]
 
-        for index, prompt in enumerate(prompts, start=1):
-            destination = launch_pad_dir / f"prompt_{index:02d}.txt"
-            with destination.open("w", encoding="utf-8") as handle:
-                handle.write(prompt)
+        if not limited_prompts:
+            return []
 
-        return [str(destination) for destination in launch_pad_dir.glob("*.txt")]
+        for index, prompt in enumerate(limited_prompts, start=1):
+            destination = self.launch_pad_dir / f"prompt_{index:02d}.txt"
+            destination.write_text(prompt, encoding="utf-8")
+
+        return [str(path) for path in sorted(self.launch_pad_dir.glob("prompt_*.txt"))]

@@ -46,47 +46,69 @@ def test_build_parser_configures_expected_arguments(monkeypatch):
     assert stack_kwargs["choices"] == ["asg", "p2d", "cle"]
     assert stack_kwargs["required"] is True
 
-    prompt_kwargs = created_parser.arguments[4][1]
-    assert prompt_kwargs["required"] is False
+    limit_kwargs = created_parser.arguments[5][1]
+    assert limit_kwargs["type"] is int
+    assert limit_kwargs["default"] == 5
 
     debug_kwargs = created_parser.arguments[6][1]
     assert debug_kwargs["action"] == "store_true"
 
 
+def _base_args(**overrides):
+    defaults = {
+        "stack": "asg",
+        "type": "unit",
+        "prompt": None,
+        "target_type": "module",
+        "limit": 5,
+        "jira": None,
+    }
+    defaults.update(overrides)
+    return SimpleNamespace(**defaults)
+
+
 def test_validate_args_accepts_valid_configuration():
-    args = SimpleNamespace(type="unit", prompt=None, target_type="module")
+    args = _base_args()
     cli._validate_args(args)
+    assert args.repo == "tii-assisted-grading-services"
+    assert args.jira == "P2D-18"
 
 
 def test_validate_args_rejects_invalid_type():
-    args = SimpleNamespace(type="unsupported", prompt=None, target_type="module")
+    args = _base_args(type="unsupported")
     with pytest.raises(ValueError) as excinfo:
         cli._validate_args(args)
     assert "Invalid session type" in str(excinfo.value)
 
 
 def test_validate_args_requires_prompt_for_prompt_type():
-    args = SimpleNamespace(type="prompt", prompt=None, target_type=None)
+    args = _base_args(type="prompt")
     with pytest.raises(ValueError) as excinfo:
         cli._validate_args(args)
     assert "Prompt is required" in str(excinfo.value)
 
 
 def test_validate_args_forces_scenario_for_integration():
-    args = SimpleNamespace(type="integration", prompt=None, target_type="class")
+    args = _base_args(type="integration", target_type="class")
     cli._validate_args(args)
     assert args.target_type == "scenario"
 
 
 def test_validate_args_rejects_invalid_unit_target():
-    args = SimpleNamespace(type="unit", prompt=None, target_type="scenario")
+    args = _base_args(target_type="scenario")
     with pytest.raises(ValueError) as excinfo:
         cli._validate_args(args)
     assert "Target type must be one of" in str(excinfo.value)
 
 
+def test_validate_args_preserves_user_supplied_jira():
+    args = _base_args(jira="CUSTOM-1")
+    cli._validate_args(args)
+    assert args.jira == "CUSTOM-1"
+
+
 def test_main_parses_and_launches(monkeypatch):
-    parsed_args = SimpleNamespace(type="unit", prompt=None, target_type="module")
+    parsed_args = _base_args()
 
     class DummyParser:
         def parse_args(self):
