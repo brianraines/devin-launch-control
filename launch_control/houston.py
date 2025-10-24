@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Iterable, List, Mapping, Optional, Tuple
 
 from .api import DevinAPI
+from .config import STACK_CONFIG
 from .rocket_fuel import RocketFuel
 
 
@@ -18,14 +19,17 @@ class MissionControl:
     def __init__(self, args):
         self.args = args
 
-        if self.args.stack == "asg":
-            self.repo = "tii-assisted-grading-services"
-        elif self.args.stack == "p2d":
-            self.repo = "paper-to-digital-services"
-        elif self.args.stack == "cle":
-            self.repo = "tii-checklist-editor-services"
-        else:
-            raise ValueError(f"Invalid stack: {self.args.stack}")
+        provided_repo = getattr(args, "repo", None)
+        if provided_repo:
+            self.repo = provided_repo
+            return
+
+        stack = getattr(args, "stack", None)
+        if stack not in STACK_CONFIG:
+            raise ValueError(f"Invalid stack: {stack}")
+
+        self.repo = STACK_CONFIG[stack]["repo"]
+        setattr(self.args, "repo", self.repo)
 
     def debug(self, message: str):
         """
